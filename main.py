@@ -8,7 +8,7 @@ import swisseph as swe
 import os
 
 # Получаем путь к папке, где лежит этот скрипт (main.py)
-current_dir = os.path.dirname(os.path.abspath(__file__))
+base_dir = os.path.dirname(os.path.abspath(__file__))
 
 # Строим путь к папке ephe
 ephe_path = os.path.join(current_dir, 'ephe')
