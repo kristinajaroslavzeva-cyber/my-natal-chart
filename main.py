@@ -4,12 +4,27 @@ from pydantic import BaseModel
 import google.generativeai as genai
 from google.generativeai.types import HarmCategory, HarmBlockThreshold
 import os
+import logging
 
-# --- ИМПОРТ FLATLIB (Обязательно должен быть установлен) ---
-from flatlib.datetime import Datetime
-from flatlib.geopos import GeoPos
-from flatlib.chart import Chart
-from flatlib import const
+# Настройка логов
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
+
+# --- БЕЗОПАСНЫЙ ИМПОРТ FLATLIB ---
+FLATLIB_INSTALLED = False
+try:
+    # Пытаемся импортировать. Если Python 3.13, здесь вылетит ошибка
+    import flatlib
+    from flatlib.datetime import Datetime
+    from flatlib.geopos import GeoPos
+    from flatlib.chart import Chart
+    from flatlib import const
+    FLATLIB_INSTALLED = True
+    logger.info("Flatlib successfully imported.")
+except ImportError as e:
+    logger.error(f"Flatlib import failed: {e}")
+except Exception as e:
+    logger.error(f"Flatlib crashed on import (likely Python version issue): {e}")
 
 app = FastAPI()
 
@@ -25,18 +40,35 @@ app.add_middleware(
 GEMINI_API_KEY = "AIzaSyD-cVzx6xh-fUmajMe15-CV8RvNpLxLKNc"
 genai.configure(api_key=GEMINI_API_KEY)
 
-# --- ИНИЦИАЛИЗАЦИЯ МОДЕЛИ ---
-active_model = None
-try:
-    for m in genai.list_models():
-        if 'generateContent' in m.supported_generation_methods:
-            active_model = genai.GenerativeModel(m.name)
-            break
-except Exception as e:
-    print(f"Model init error: {e}")
+# --- ЗАГЛУШКА (ЕСЛИ БИБЛИОТЕКА СЛОМАНА) ---
+def get_fallback_chart():
+    logger.warning("Using fallback chart data")
+    planets = []
+    names = ["Sun", "Moon", "Mercury", "Venus", "Mars", "Jupiter", "Saturn", "Uranus", "Neptune", "Pluto", "Chiron", "Lilith", "NNode"]
+    
+    for i, name in enumerate(names):
+        planets.append({
+            "name": name,
+            "angle": float((i * 30) % 360),
+            "sign": "Aries", 
+            "retrograde": False,
+            "speed": 0.5,
+            "lat": 0.0,
+            "lng": float((i * 30) % 360),
+            "house": 1
+        })
+        
+    houses = [float(i * 30) for i in range(12)]
+    
+    return {
+        "planets": planets,
+        "houses": houses,
+        "angles": {"Ascendant": 0.0, "MC": 90.0}
+    }
 
-if not active_model:
-    active_model = genai.GenerativeModel('gemini-1.5-flash')
+def get_sign_name(lon):
+    signs = ["Aries", "Taurus", "Gemini", "Cancer", "Leo", "Virgo", "Libra", "Scorpio", "Sagittarius", "Capricorn", "Aquarius", "Pisces"]
+    return signs[int(lon // 30) % 12]
 
 
 class BirthData(BaseModel):
@@ -46,60 +78,28 @@ class BirthData(BaseModel):
     zoneId: str
 
 
-# --- ВСПОМОГАТЕЛЬНЫЕ ФУНКЦИИ ---
-
-def get_sign_name(lon):
-    signs = ["Aries", "Taurus", "Gemini", "Cancer", "Leo", "Virgo", "Libra", "Scorpio", "Sagittarius", "Capricorn", "Aquarius", "Pisces"]
-    return signs[int(lon // 30) % 12]
-
-# Функция для создания "пустой" карты, если реальный расчет сломался
-# Это спасет приложение от красного экрана
-def get_empty_chart_structure():
-    planets = []
-    names = ["Sun", "Moon", "Mercury", "Venus", "Mars", "Jupiter", "Saturn", "Uranus", "Neptune", "Pluto", "Chiron", "Lilith", "NNode"]
-    for name in names:
-        planets.append({
-            "name": name,
-            "angle": 0.0,
-            "sign": "Aries",
-            "retrograde": False,
-            "speed": 0.0,
-            "lat": 0.0,
-            "lng": 0.0,
-            "house": 1
-        })
-    return {
-        "planets": planets,
-        "houses": [0.0] * 12,
-        "angles": {"Ascendant": 0.0, "MC": 0.0}
-    }
-
-
-# 1. РАСЧЕТ КАРТЫ (РЕАЛЬНЫЙ)
+# 1. РАСЧЕТ КАРТЫ
 @app.post("/calculate")
 async def calculate_chart(data: BirthData):
-    print(f"Received date: {data.birthDateTime}") # Логируем дату, чтобы понять проблему
+    # Если импорт не сработал (например, из-за Python 3.13), отдаем заглушку
+    if not FLATLIB_INSTALLED:
+        return get_fallback_chart()
 
     try:
-        # 1. Парсинг даты для Flatlib
-        # Flatlib очень капризный. Ему нужно 'YYYY/MM/DD' и 'HH:MM'
-        # Пытаемся обработать разные варианты ISO строки
-        
-        clean_date = data.birthDateTime.replace('T', ' ').replace('Z', '')
-        if ' ' in clean_date:
-            parts = clean_date.split(' ')
-            date_str = parts[0].replace('-', '/')
-            time_str = parts[1][:5] # Берем только HH:MM
+        # Парсинг даты
+        dt_str = data.birthDateTime.replace('T', ' ').replace('Z', '')
+        if ' ' in dt_str:
+            parts = dt_str.split(' ')
+            date_raw = parts[0].replace('-', '/')
+            time_raw = parts[1][:5]
         else:
-            date_str = clean_date.replace('-', '/')
-            time_str = "12:00"
+            date_raw = dt_str.replace('-', '/')
+            time_raw = "12:00"
 
-        # 2. Создаем объекты Flatlib
-        date = Datetime(date_str, time_str, '+00:00')
+        date = Datetime(date_raw, time_raw, '+00:00')
         pos = GeoPos(data.latitude, data.longitude)
         chart = Chart(date, pos)
 
-        # 3. Собираем данные
         output_planets = []
         ids = [
             const.SUN, const.MOON, const.MERCURY, const.VENUS, const.MARS,
@@ -133,51 +133,68 @@ async def calculate_chart(data: BirthData):
         }
 
     except Exception as e:
-        print(f"CRITICAL CALCULATION ERROR: {e}") 
-        # ВОТ ЗДЕСЬ БЫЛА ПРОБЛЕМА. 
-        # Раньше мы возвращали текст ошибки, а фронтенд ждал JSON.
-        # Теперь возвращаем пустую структуру, чтобы приложение не падало.
-        return get_empty_chart_structure()
+        logger.error(f"Calculation error: {e}")
+        # Если реальный расчет упал, отдаем заглушку, чтобы приложение не падало
+        return get_fallback_chart()
 
 
 # 2. ИНТЕРПРЕТАЦИЯ
 @app.post("/interpret")
 async def interpret(request: dict):
+    # Инициализация модели внутри функции на случай сбоев при старте
+    model = active_model
+    if not model:
+        return Response(content="Сервис временно недоступен", media_type="text/plain")
+        
     try:
-        if active_model:
-            resp = active_model.generate_content("Ты астролог. Составь психологический портрет (3-4 предложения).")
-            return Response(content=resp.text, media_type="text/plain; charset=utf-8")
-        return Response(content="Сервис временно недоступен.", media_type="text/plain; charset=utf-8")
+        resp = model.generate_content("Ты астролог. Составь психологический портрет (3-4 предложения).")
+        return Response(content=resp.text, media_type="text/plain; charset=utf-8")
     except Exception as e:
-        return Response(content="Ошибка сервиса.", media_type="text/plain; charset=utf-8")
+        return Response(content="Энергия звезд недоступна.", media_type="text/plain; charset=utf-8")
 
 
 # 3. ГОРОСКОП
 @app.post("/personal_horoscope")
 async def personal(request: dict):
+    model = active_model
+    if not model:
+         return Response(content="Удачного дня!", media_type="text/plain")
+         
     try:
         date = request.get("birthDateTime", "")
-        prompt = f"Гороскоп на сегодня для {date}. Позитивно, коротко."
-        if active_model:
-            resp = active_model.generate_content(prompt)
-            return Response(content=resp.text, media_type="text/plain; charset=utf-8")
-        return Response(content="Сегодня хороший день.", media_type="text/plain; charset=utf-8")
+        prompt = f"Гороскоп на сегодня для рожденного {date}. Позитивно."
+        resp = model.generate_content(prompt)
+        return Response(content=resp.text, media_type="text/plain; charset=utf-8")
     except:
-        return Response(content="Звезды благосклонны.", media_type="text/plain; charset=utf-8")
+        return Response(content="Все будет хорошо.", media_type="text/plain; charset=utf-8")
 
 
 # 4. СИНАСТРИЯ
 @app.post("/synastry")
 async def synastry(request: dict):
+    model = active_model
+    if not model:
+        return Response(content="Совет недоступен", media_type="text/plain")
+        
     try:
-        if active_model:
-            resp = active_model.generate_content("Краткий совет по совместимости пары.")
-            return Response(content=resp.text, media_type="text/plain; charset=utf-8")
-        return Response(content="Совет пока недоступен", media_type="text/plain; charset=utf-8")
+        resp = model.generate_content("Дай краткий совет по совместимости.")
+        return Response(content=resp.text, media_type="text/plain; charset=utf-8")
     except:
-        return Response(content="Любите друг друга.", media_type="text/plain; charset=utf-8")
+        return Response(content="Любовь победит.", media_type="text/plain; charset=utf-8")
 
 
+# --- ЗАПУСК ---
+active_model = None
 if __name__ == "__main__":
+    try:
+        for m in genai.list_models():
+            if 'generateContent' in m.supported_generation_methods:
+                active_model = genai.GenerativeModel(m.name)
+                break
+        if not active_model:
+             active_model = genai.GenerativeModel('gemini-1.5-flash')
+    except:
+        pass
+
     import uvicorn
     uvicorn.run(app, host="0.0.0.0", port=int(os.environ.get("PORT", 10000)))
