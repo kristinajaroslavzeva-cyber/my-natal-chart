@@ -31,7 +31,7 @@ ephe_path = os.path.join(current_dir, 'ephe')
 swe.set_ephe_path(ephe_path)
 
 # ВСТАВЬ СЮДА СВОЙ КЛЮЧ (В КАВЫЧКАХ!)
-GEMINI_API_KEY = "AIzaSyAObmU1VR5hRc-bCcbYyfanS_6QQ2vr1ksА"  
+GEMINI_API_KEY = "AIzaSyAObmU1VR5hRc-bCcbYyfanS_6QQ2vr1ks"  
 
 if AI_AVAILABLE:
     try:
