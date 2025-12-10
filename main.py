@@ -1,8 +1,9 @@
 from fastapi import FastAPI, Response
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
-import os
 import google.generativeai as genai
+from google.generativeai.types import HarmCategory, HarmBlockThreshold
+import os
 
 app = FastAPI()
 
@@ -14,23 +15,26 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# КЛЮЧ
+# --- НАСТРОЙКА GEMINI ---
+# ВАЖНО: Никогда не свети реальный ключ в скриншотах или чатах!
+# Вставь свой ключ сюда (тот, что начинался на AIza...)
 GEMINI_API_KEY = "AIzaSyD-cVzx6xh-fUmajMe15-CV8RvNpLxLKNc"
 genai.configure(api_key=GEMINI_API_KEY)
 
-# --- АВТОПОДБОР МОДЕЛИ (Чтобы не было 404) ---
-active_model = None
-try:
-    for m in genai.list_models():
-        if 'generateContent' in m.supported_generation_methods:
-            active_model = genai.GenerativeModel(m.name)
-            break
-except:
-    pass
+# Настройки безопасности: ОТКЛЮЧАЕМ блокировку, чтобы гороскопы не резались
+# из-за слов "смерть", "секс", "опасность" и т.д.
+safety_settings = {
+    HarmCategory.HARM_CATEGORY_HARASSMENT: HarmBlockThreshold.BLOCK_NONE,
+    HarmCategory.HARM_CATEGORY_HATE_SPEECH: HarmBlockThreshold.BLOCK_NONE,
+    HarmCategory.HARM_CATEGORY_SEXUALLY_EXPLICIT: HarmBlockThreshold.BLOCK_NONE,
+    HarmCategory.HARM_CATEGORY_DANGEROUS_CONTENT: HarmBlockThreshold.BLOCK_NONE,
+}
 
-# Если автоподбор не сработал - берем Flash
-if not active_model:
-    active_model = genai.GenerativeModel('gemini-1.5-flash')
+# Используем конкретную, стабильную модель
+model = genai.GenerativeModel(
+    model_name='gemini-1.5-flash',
+    safety_settings=safety_settings
+)
 
 # -----------------------------------------------------------
 
@@ -40,52 +44,63 @@ class BirthData(BaseModel):
     longitude: float
     zoneId: str
 
-# Расчет (оставляем пустым, чтобы не мешал тесту ИИ)
 @app.post("/calculate")
 async def calculate_chart(data: BirthData):
+    # Заглушка для теста
     return {"planets": [], "houses": [], "angles": {"Ascendant": 0.0, "MC": 0.0}}
 
-# --- ИНТЕРПРЕТАЦИЯ (ТЕПЕРЬ ДЛИННАЯ) ---
 @app.post("/interpret")
 async def interpret(request: dict):
     try:
-        # ВОТ ЗДЕСЬ Я ИСПРАВИЛ "КОРОТКИЙ" НА "ПОДРОБНЫЙ"
         prompt = (
             "Ты профессиональный астролог. Напиши ПОДРОБНЫЙ, ГЛУБОКИЙ и РАЗВЕРНУТЫЙ "
             "психологический портрет личности. Не жалей слов. Опиши характер детально. "
-            "ВАЖНО: Пиши чистым текстом, без звездочек и жирного шрифта."
+            "ВАЖНО: Пиши обычным сплошным текстом. НЕ используй жирный шрифт, "
+            "НЕ используй звездочки (**), НЕ используй заголовки (#)."
         )
-        resp = active_model.generate_content(prompt)
+        # Убрали stream=True, ждем полный ответ сразу
+        resp = model.generate_content(prompt)
+        
+        # Проверка, вернулся ли текст (иногда бывает пусто)
+        if not resp.text:
+            return Response(content="Не удалось составить интерпретацию. Попробуйте снова.", media_type="text/plain; charset=utf-8")
+            
         return Response(content=resp.text, media_type="text/plain; charset=utf-8")
         
     except Exception as e:
-        return Response(content=f"ОШИБКА: {str(e)}", media_type="text/plain; charset=utf-8")
+        print(f"Ошибка Interpret: {e}")
+        return Response(content=f"ОШИБКА СЕРВЕРА: {str(e)}", media_type="text/plain; charset=utf-8")
 
-# --- ГОРОСКОП (ТЕПЕРЬ ДЛИННЫЙ) ---
 @app.post("/personal_horoscope")
 async def personal(request: dict):
     try:
-        # И ЗДЕСЬ ТОЖЕ
         prompt = (
             "Напиши БОЛЬШОЙ и ПОДРОБНЫЙ гороскоп на сегодня. "
             "Расшифруй сферы: Любовь, Карьера, Деньги, Здоровье. "
             "Дай развернутый совет дня. "
-            "Пиши чистым текстом без форматирования."
+            "ВАЖНО: Пиши обычным текстом без Markdown форматирования (без звездочек и решеток)."
         )
-        resp = active_model.generate_content(prompt)
+        resp = model.generate_content(prompt)
+
+        if not resp.text:
+             return Response(content="Звезды сегодня молчат. Попробуйте позже.", media_type="text/plain; charset=utf-8")
+
         return Response(content=resp.text, media_type="text/plain; charset=utf-8")
 
     except Exception as e:
-        return Response(content=f"ОШИБКА: {str(e)}", media_type="text/plain; charset=utf-8")
+        print(f"Ошибка Horoscope: {e}")
+        return Response(content=f"ОШИБКА СЕРВЕРА: {str(e)}", media_type="text/plain; charset=utf-8")
 
 @app.post("/synastry")
 async def synastry(request: dict):
     try:
-        resp = active_model.generate_content("Напиши подробный анализ совместимости. Дай 3 важных совета. Без форматирования.")
+        prompt = "Напиши подробный анализ совместимости. Дай 3 важных совета. Пиши простым текстом без форматирования."
+        resp = model.generate_content(prompt)
         return Response(content=resp.text, media_type="text/plain; charset=utf-8")
     except Exception as e:
         return Response(content=f"ОШИБКА: {str(e)}", media_type="text/plain; charset=utf-8")
 
 if __name__ == "__main__":
     import uvicorn
-    uvicorn.run(app, host="0.0.0.0", port=10000)
+    # Порт 10000 для Render, 8000 для локалки
+    uvicorn.run(app, host="0.0.0.0", port=int(os.environ.get("PORT", 10000)))
