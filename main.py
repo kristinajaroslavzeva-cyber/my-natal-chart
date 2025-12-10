@@ -17,16 +17,17 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# --- 1. НАСТРОЙКА ЭФЕМЕРИД (МАТЕМАТИКА) ---
+# --- 1. НАСТРОЙКА ---
 current_dir = os.path.dirname(os.path.abspath(__file__))
 ephe_path = os.path.join(current_dir, 'ephe')
 swe.set_ephe_path(ephe_path)
 
-# --- 2. НАСТРОЙКА ИИ (ЛИТЕРАТУРА) ---
-# ВСТАВЬ СЮДА КЛЮЧ
-GEMINI_API_KEY = "AIzaSyAObmU1VR5hRc-bCcbYyfanS_6QQ2vr1ks" 
+# ВСТАВЬ КЛЮЧ
+GEMINI_API_KEY = "AIzaSyAObmU1VR5hRc-bCcbYyfanS_6QQ2vr1ks"
+
+# Я ПОМЕНЯЛ МОДЕЛЬ НА GEMINI-PRO (Она надежнее)
 genai.configure(api_key=GEMINI_API_KEY)
-model = genai.GenerativeModel('gemini-1.5-flash')
+model = genai.GenerativeModel('gemini-pro')
 
 class BirthData(BaseModel):
     birthDateTime: str
@@ -39,7 +40,7 @@ def get_sign(longitude):
              "Libra", "Scorpio", "Sagittarius", "Capricorn", "Aquarius", "Pisces"]
     return signs[int(longitude / 30) % 12]
 
-# --- РАСЧЕТ КООРДИНАТ (ЭФЕМЕРИДЫ) ---
+# --- 2. РАСЧЕТ (МАТЕМАТИКА) ---
 @app.post("/calculate")
 async def calculate_chart(data: BirthData):
     try:
@@ -93,62 +94,57 @@ async def calculate_chart(data: BirthData):
 
         return {"planets": planets_result, "houses": houses_result, "angles": angles}
     except Exception as e:
-        # Вернем пустую структуру при ошибке, чтобы приложение не падало
         return {"planets": [], "houses": [], "angles": {"Ascendant": 0.0, "MC": 0.0}}
 
-# --- ИНТЕРПРЕТАЦИЯ (ТОЛЬКО ИИ) ---
+# --- 3. ИНТЕРПРЕТАЦИЯ (ЧИСТЫЙ ИИ) ---
 @app.post("/interpret")
 async def interpret(request: dict):
-    # 1. Берем данные от эфемерид
+    # Достаем данные
     chart = request.get('chart', request)
     planets = chart.get('planets', [])
     
     prompt_data = ""
     for p in planets:
-        prompt_data += f"{p['name']} в знаке {p['sign']}; "
+        prompt_data += f"{p['name']} в {p['sign']}; "
 
-    # 2. Отправляем в ИИ
+    # ТОЛЬКО ИИ. НИКАКИХ ЗАГОТОВОК.
     try:
         full_prompt = (
-            f"Ты профессиональный астролог. Вот данные натальной карты: {prompt_data}. "
-            "Напиши подробный, интересный, живой психологический портрет человека. "
-            "Не используй Markdown, звездочки или решетки. Пиши просто текстом."
+            f"Ты профессиональный астролог. Вот натальная карта: {prompt_data}. "
+            "Напиши глубокий психологический портрет. "
+            "ПИШИ ТОЛЬКО ТЕКСТ. НЕ ИСПОЛЬЗУЙ ЗВЕЗДОЧКИ, РЕШЕТКИ ИЛИ MARKDOWN."
         )
         resp = model.generate_content(full_prompt)
-        result_text = resp.text
+        final_text = resp.text
     except Exception as e:
-        result_text = f"Ошибка ИИ: {str(e)}. Проверь ключ."
+        final_text = f"ОШИБКА ГУГЛ ИИ: {str(e)}"
 
-    # 3. Отдаем ЧИСТЫЙ ТЕКСТ (без кавычек и JSON)
-    return Response(content=result_text, media_type="text/plain")
+    return Response(content=final_text, media_type="text/plain; charset=utf-8")
 
-# --- ГОРОСКОП НА СЕГОДНЯ (ТОЛЬКО ИИ) ---
+# --- 4. ГОРОСКОП (ЧИСТЫЙ ИИ) ---
 @app.post("/personal_horoscope")
 async def personal(request: dict):
     try:
         resp = model.generate_content(
-            "Напиши персональный гороскоп на сегодня. "
-            "Раздели на Любовь, Карьеру и Совет. "
-            "Не используй Markdown и звездочки. Пиши просто текстом."
+            "Напиши персональный гороскоп на сегодня. Общее, Любовь, Карьера. "
+            "ПИШИ ТОЛЬКО ТЕКСТ. БЕЗ ЗВЕЗДОЧЕК."
         )
-        result_text = resp.text
+        final_text = resp.text
     except Exception as e:
-        result_text = f"Ошибка ИИ при генерации гороскопа: {str(e)}"
+        final_text = f"ОШИБКА ГУГЛ ИИ: {str(e)}"
 
-    # Отдаем ЧИСТЫЙ ТЕКСТ
-    return Response(content=result_text, media_type="text/plain")
+    return Response(content=final_text, media_type="text/plain; charset=utf-8")
 
-# --- СИНАСТРИЯ (ТОЛЬКО ИИ) ---
+# --- 5. СИНАСТРИЯ (ЧИСТЫЙ ИИ) ---
 @app.post("/synastry")
 async def synastry(request: dict):
-    # Для теста синастрии пока просто попросим общий совет
     try:
-        resp = model.generate_content("Напиши короткий совет по совместимости для пары. Просто текст.")
-        result_text = resp.text
+        resp = model.generate_content("Напиши совет по совместимости для пары. Просто текст.")
+        final_text = resp.text
     except Exception as e:
-        result_text = "Ошибка ИИ."
+        final_text = f"ОШИБКА ГУГЛ ИИ: {str(e)}"
 
-    return Response(content=result_text, media_type="text/plain")
+    return Response(content=final_text, media_type="text/plain; charset=utf-8")
 
 if __name__ == "__main__":
     import uvicorn
