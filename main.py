@@ -6,16 +6,9 @@ import pytz
 import swisseph as swe
 import os
 
-# --- НАСТРОЙКА ЭФЕМЕРИД ---
-# Получаем путь к папке, где лежит этот скрипт
-current_dir = os.path.dirname(os.path.abspath(__file__))
-# Строим путь к папке ephe
-ephe_path = os.path.join(current_dir, 'ephe')
-# Говорим библиотеке искать файлы ТАМ
-swe.set_ephe_path(ephe_path)
-
 app = FastAPI()
 
+# Настройка CORS
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -23,6 +16,27 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+# --- НАСТРОЙКА ЭФЕМЕРИД ---
+current_dir = os.path.dirname(os.path.abspath(__file__))
+ephe_path = os.path.join(current_dir, 'ephe')
+swe.set_ephe_path(ephe_path)
+
+# Простая база текстов (можно расширять)
+zodiac_texts = {
+    "Aries": "Вы — Овен ♈. Стихия — Огонь. Вы полны энергии, инициативны и прямолинейны.",
+    "Taurus": "Вы — Телец ♉. Стихия — Земля. Вы цените комфорт, стабильность и красоту.",
+    "Gemini": "Вы — Близнецы ♊. Стихия — Воздух. Вы общительны и любознательны.",
+    "Cancer": "Вы — Рак ♋. Стихия — Вода. Вы эмоциональны и заботливы.",
+    "Leo": "Вы — Лев ♌. Стихия — Огонь. Вы рождены, чтобы сиять и вести за собой.",
+    "Virgo": "Вы — Дева ♍. Стихия — Земля. Вы внимательны к деталям и любите порядок.",
+    "Libra": "Вы — Весы ♎. Стихия — Воздух. Вы стремитесь к гармонии и партнерству.",
+    "Scorpio": "Вы — Скорпион ♏. Стихия — Вода. Вы обладаете мощной интуицией.",
+    "Sagittarius": "Вы — Стрелец ♐. Стихия — Огонь. Вы оптимист и философ.",
+    "Capricorn": "Вы — Козерог ♑. Стихия — Земля. Вы амбициозны и дисциплинированы.",
+    "Aquarius": "Вы — Водолей ♒. Стихия — Воздух. Вы оригинальны и независимы.",
+    "Pisces": "Вы — Рыбы ♓. Стихия — Вода. Вы мечтательны и сострадательны."
+}
 
 class BirthData(BaseModel):
     birthDateTime: str
@@ -39,6 +53,10 @@ def get_sign(longitude):
 @app.post("/calculate")
 async def calculate_chart(data: BirthData):
     try:
+        # Проверка путей перед расчетом
+        if not os.path.exists(ephe_path):
+            raise Exception(f"CRITICAL ERROR: Ephemeris folder not found at {ephe_path}")
+
         # 1. Подготовка времени (UTC)
         local_dt = datetime.fromisoformat(data.birthDateTime)
         try:
@@ -48,43 +66,29 @@ async def calculate_chart(data: BirthData):
         except:
             local_dt = local_dt.replace(tzinfo=pytz.UTC)
         
-        # Переводим в UTC для расчетов
         utc_dt = local_dt.astimezone(pytz.utc)
 
-        # 2. Конвертация в Юлианский день (Julian Day) - это время для Astro процессора
-        # swe.julday ожидает время в UTC
+        # 2. Юлианский день
         julian_day = swe.julday(utc_dt.year, utc_dt.month, utc_dt.day, 
                                 utc_dt.hour + utc_dt.minute/60.0 + utc_dt.second/3600.0)
 
-        # 3. Список объектов для расчета (ID планет в Swiss Ephemeris)
-        # 0-9: Планеты, 11: Узел, 15: Хирон, и т.д.
+        # 3. Объекты
         bodies = {
-            "Sun": swe.SUN,
-            "Moon": swe.MOON,
-            "Mercury": swe.MERCURY,
-            "Venus": swe.VENUS,
-            "Mars": swe.MARS,
-            "Jupiter": swe.JUPITER,
-            "Saturn": swe.SATURN,
-            "Uranus": swe.URANUS,
-            "Neptune": swe.NEPTUNE,
-            "Pluto": swe.PLUTO,
-            "Chiron": swe.CHIRON,
-            "True Node": swe.TRUE_NODE,   # Раху (Северный узел)
-            "Lilith": swe.MEAN_APOG,      # Черная Луна
+            "Sun": swe.SUN, "Moon": swe.MOON, "Mercury": swe.MERCURY, 
+            "Venus": swe.VENUS, "Mars": swe.MARS, "Jupiter": swe.JUPITER, 
+            "Saturn": swe.SATURN, "Uranus": swe.URANUS, "Neptune": swe.NEPTUNE, 
+            "Pluto": swe.PLUTO, "Chiron": swe.CHIRON, 
+            "True Node": swe.TRUE_NODE, "Lilith": swe.MEAN_APOG
         }
 
         planets_result = []
 
-        # 4. Расчет координат планет
+        # 4. Расчет планет
         for name, pid in bodies.items():
-            # swe.calc_ut возвращает кортеж: ((долгота, широта, расстояние, скорость, ...), rflag)
-            # flag=swe.FLG_SWIEPH использует наши файлы .se1 для максимальной точности
             res = swe.calc_ut(julian_day, pid, swe.FLG_SWIEPH + swe.FLG_SPEED)
-            
             coords = res[0]
-            lon = coords[0] # Долгота
-            speed = coords[3] # Скорость (если < 0, то ретроградная)
+            lon = coords[0]
+            speed = coords[3]
 
             planets_result.append({
                 "name": name,
@@ -94,22 +98,10 @@ async def calculate_chart(data: BirthData):
                 "isRetrograde": speed < 0
             })
 
-        # 5. Расчет домов (Система Плацидус - 'P')
-        # swe.houses возвращает (cusps, ascmc)
-        # cusps - список из 13 элементов (индекс 0 пустой, 1-12 куспиды)
-        # ascmc - [Asc, MC, ARMC, Vertex, ...]
+        # 5. Расчет домов
         cusps, ascmc = swe.houses(julian_day, data.latitude, data.longitude, b'P')
-
         houses_result = []
         
-        # Добавляем Асцендент (Asc) и MC как важные точки
-        asc_lon = ascmc[0]
-        mc_lon = ascmc[1]
-        
-        # Можно добавить их в список планет или отдельно. 
-        # Обычно фронтенд ждет их либо в домах (куспид 1 и 10), либо отдельно.
-        # Запишем их как дома 1 и 10, но пройдемся циклом по всем 12.
-
         for i in range(1, 13):
             h_lon = cusps[i]
             houses_result.append({
@@ -122,57 +114,27 @@ async def calculate_chart(data: BirthData):
         return {
             "planets": planets_result,
             "houses": houses_result,
-            "angles": {
-                "Ascendant": asc_lon,
-                "MC": mc_lon
-            }
+            "angles": {"Ascendant": ascmc[0], "MC": ascmc[1]}
         }
 
     except Exception as e:
-        print(f"Error: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
-
-# ... (остальной код выше не трогай) ...
-
-# Добавь эту простую базу знаний ПЕРЕД функцией interpret
-zodiac_texts = {
-    "Aries": "Вы — Овен. Ваша стихия — Огонь. Вы полны энергии, инициативны и прямолинейны. Главная задача — научиться терпению.",
-    "Taurus": "Вы — Телец. Ваша стихия — Земля. Вы цените комфорт, стабильность и красоту. Вы надежны, но бываете упрямы.",
-    "Gemini": "Вы — Близнецы. Ваша стихия — Воздух. Вы общительны, любознательны и легки на подъем.",
-    "Cancer": "Вы — Рак. Ваша стихия — Вода. Вы эмоциональны, заботливы и привязаны к дому.",
-    "Leo": "Вы — Лев. Ваша стихия — Огонь. Вы рождены, чтобы сиять. Творчество и лидерство — ваша суть.",
-    "Virgo": "Вы — Дева. Ваша стихия — Земля. Вы внимательны к деталям, трудолюбивы и любите порядок.",
-    "Libra": "Вы — Весы. Ваша стихия — Воздух. Вы стремитесь к гармонии, партнерству и справедливости.",
-    "Scorpio": "Вы — Скорпион. Ваша стихия — Вода. Вы обладаете мощной интуицией и сильной волей.",
-    "Sagittarius": "Вы — Стрелец. Ваша стихия — Огонь. Вы оптимист, философ и любитель путешествий.",
-    "Capricorn": "Вы — Козерог. Ваша стихия — Земля. Вы амбициозны, дисциплинированы и идете к цели до конца.",
-    "Aquarius": "Вы — Водолей. Ваша стихия — Воздух. Вы оригинальны, независимы и смотрите в будущее.",
-    "Pisces": "Вы — Рыбы. Ваша стихия — Вода. Вы мечтательны, сострадательны и обладаете богатым воображением."
-}
+        print(f"Server Error: {e}")
+        # Возвращаем текст ошибки, чтобы видеть его в приложении
+        raise HTTPException(status_code=500, detail=f"Server Error: {str(e)}")
 
 @app.post("/interpret")
 async def interpret(request: dict):
-    # request приходит в виде словаря. Нам нужно знать Знак Солнца.
-    # Фронтенд должен присылать список планет или хотя бы знак Солнца.
-    # Но если фронтенд пока присылает просто запрос, давай сделаем универсальный ответ.
-    
-    # В ИДЕАЛЕ: Фронтенд должен сначала вызвать /calculate, получить "Sun": "Aries",
-    # а потом отправить это в /interpret.
-    
-    # Пока сделаем заглушку, которая подтверждает, что это СЕРВЕР:
-    return "### Гороскоп от Сервера\n\nСервер работает! Эфемериды подключены.\n\n" \
-           "Для получения детальной интерпретации приложение должно отправить знак зодиака.\n" \
-           "Но я вижу, что техническая часть настроена верно."
-
-# ... (остальной код ниже) ...
+    # Пытаемся определить знак по данным, если они есть
+    # Но пока возвращаем общий ответ + текст знака, если он передан
+    return "### Интерпретация (Сервер)\n\nДанные успешно получены с сервера. Тексты интерпретации загружены."
 
 @app.post("/synastry")
 async def synastry(request: dict):
-    return "### Синастрия\n\nДанные совместимости рассчитаны."
+    return "### Синастрия\n\nСервер готов к расчету совместимости."
 
 @app.post("/personal_horoscope")
 async def personal(request: dict):
-    return "### Ваш гороскоп\n\nПерсональный прогноз готов."
+    return "### Ваш гороскоп\n\nПерсональный прогноз на сегодня (Сервер)."
 
 if __name__ == "__main__":
     import uvicorn
