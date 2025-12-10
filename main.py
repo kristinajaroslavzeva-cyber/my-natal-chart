@@ -28,15 +28,21 @@ safety_settings = {
     HarmCategory.HARM_CATEGORY_DANGEROUS_CONTENT: HarmBlockThreshold.BLOCK_NONE,
 }
 
-# --- ИНИЦИАЛИЗАЦИЯ МОДЕЛИ ---
+# --- АВТОПОДБОР МОДЕЛИ (Твой рабочий метод) ---
 active_model = None
 try:
-    # Берем Gemini 1.5 Flash - она креативная и быстрая
-    active_model = genai.GenerativeModel('gemini-1.5-flash', safety_settings=safety_settings)
+    # Ищем любую доступную модель, которая умеет генерировать текст
+    for m in genai.list_models():
+        if 'generateContent' in m.supported_generation_methods:
+            active_model = genai.GenerativeModel(m.name)
+            print(f"Active model found: {m.name}")
+            break
 except Exception as e:
-    print(f"Ошибка инициализации модели: {e}")
+    print(f"Model selection error: {e}")
 
-
+# Резерв, если цикл не сработал (чтобы сервер не упал при старте)
+if not active_model:
+    active_model = genai.GenerativeModel('gemini-1.5-flash')
 # -----------------------------------------------------------
 
 class BirthData(BaseModel):
