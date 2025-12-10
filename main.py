@@ -30,11 +30,15 @@ safety_settings = {
     HarmCategory.HARM_CATEGORY_DANGEROUS_CONTENT: HarmBlockThreshold.BLOCK_NONE,
 }
 
-# Используем конкретную, стабильную модель
-model = genai.GenerativeModel(
-    model_name='gemini-1.5-flash',
-    safety_settings=safety_settings
-)
+# --- УМНЫЙ ПОДБОР МОДЕЛИ ---
+# Мы пробуем список моделей по очереди. Какая сработает - та и молодец.
+active_model = None
+possible_models = [
+    'gemini-1.5-flash',
+    'gemini-pro',
+    'gemini-1.0-pro',
+    'gemini-1.5-pro'
+]
 
 # -----------------------------------------------------------
 
