@@ -36,7 +36,7 @@ def get_sign(longitude):
 @app.post("/calculate")
 async def calculate_chart(data: BirthData):
     try:
-        # 1. Обработка времени
+        # 1. Время
         local_dt = datetime.fromisoformat(data.birthDateTime)
         try:
             tz = pytz.timezone(data.zoneId)
@@ -46,21 +46,18 @@ async def calculate_chart(data: BirthData):
             local_dt = local_dt.replace(tzinfo=pytz.UTC)
         
         utc_dt = local_dt.astimezone(pytz.utc)
-        
         julian_day = swe.julday(utc_dt.year, utc_dt.month, utc_dt.day, 
                                 utc_dt.hour + utc_dt.minute/60.0 + utc_dt.second/3600.0)
 
-        # 2. Режим работы (Сначала пробуем файлы, если нет - формулы)
+        # 2. Режим (Файлы или Moshier)
         calc_flag = swe.FLG_SWIEPH | swe.FLG_SPEED
-        
-        # Тест на наличие файлов
         try:
             swe.calc_ut(julian_day, swe.SUN, calc_flag)
         except swe.Error:
-            print("WARNING: Files not found or error. Switching to Moshier mode.")
+            print("WARNING: Files issue. Switching to Moshier.")
             calc_flag = swe.FLG_MOSEPH | swe.FLG_SPEED
 
-        # 3. Список планет
+        # 3. Планеты
         bodies = {
             "Sun": swe.SUN, "Moon": swe.MOON, "Mercury": swe.MERCURY, 
             "Venus": swe.VENUS, "Mars": swe.MARS, "Jupiter": swe.JUPITER, 
@@ -76,10 +73,14 @@ async def calculate_chart(data: BirthData):
                 res = swe.calc_ut(julian_day, pid, calc_flag)
                 coords = res[0]
                 
-                # --- ЗАЩИТА ОТ ОШИБКИ tuple index out of range ---
+                # ЗАЩИТА №1: Проверяем, есть ли вообще координаты
+                if not coords or len(coords) < 1:
+                    print(f"Skipping {name}: No coordinates returned")
+                    continue
+
                 lon = coords[0]
                 
-                # Проверяем длину кортежа перед тем, как брать скорость
+                # ЗАЩИТА №2: Скорость
                 if len(coords) >= 4:
                     speed = coords[3]
                 else:
@@ -93,33 +94,48 @@ async def calculate_chart(data: BirthData):
                     "isRetrograde": speed < 0
                 })
             except Exception as e:
-                print(f"Skipping {name}: {e}")
+                print(f"Error planet {name}: {e}")
                 continue
 
-        # 4. Дома
+        # 4. Дома (ЗДЕСЬ БЫЛА СКРЫТАЯ ОШИБКА)
         try:
             cusps, ascmc = swe.houses(julian_day, data.latitude, data.longitude, b'P')
-            houses_result = []
-            for i in range(1, 13):
-                h_lon = cusps[i]
-                houses_result.append({
-                    "houseNumber": i,
-                    "eclipticLongitude": h_lon,
-                    "sign": get_sign(h_lon),
-                    "signDegree": h_lon % 30
-                })
             
-            # Защита для углов
-            asc = ascmc[0] if len(ascmc) > 0 else 0.0
-            mc = ascmc[1] if len(ascmc) > 1 else 0.0
+            houses_result = []
+            # swe.houses возвращает 13 куспидов (0-й пустой)
+            if len(cusps) >= 13:
+                for i in range(1, 13):
+                    h_lon = cusps[i]
+                    houses_result.append({
+                        "houseNumber": i,
+                        "eclipticLongitude": h_lon,
+                        "sign": get_sign(h_lon),
+                        "signDegree": h_lon % 30
+                    })
+            else:
+                # Если куспидов нет, создаем пустышки, чтобы фронтенд не падал
+                houses_result = []
+
+            # ЗАЩИТА №3: Асцендент и MC
+            # ascmc должен содержать [Asc, MC, ARMC, Vertex, ...]
+            # Ошибка tuple index out of range часто была ТУТ
+            asc = 0.0
+            mc = 0.0
+            
+            if ascmc and len(ascmc) >= 2:
+                asc = ascmc[0]
+                mc = ascmc[1]
+            else:
+                print("WARNING: No Ascendant/MC calculated")
             
             angles = {"Ascendant": asc, "MC": mc}
-            
+
         except Exception as e:
-             print(f"House error: {e}")
+             print(f"House calculation failed completely: {e}")
              houses_result = []
              angles = {"Ascendant": 0.0, "MC": 0.0}
 
+        # 5. Результат
         return {
             "planets": planets_result,
             "houses": houses_result,
@@ -127,21 +143,20 @@ async def calculate_chart(data: BirthData):
         }
 
     except Exception as e:
-        print(f"CRITICAL: {e}")
-        # Даже если все упало, вернем ошибку текстом, а не краш сервера
+        print(f"FATAL ERROR: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 @app.post("/interpret")
 async def interpret(request: dict):
-    return "### Интерпретация (Сервер)\n\nРасчет выполнен успешно."
+    return "### Интерпретация\n\nСервер работает."
 
 @app.post("/synastry")
 async def synastry(request: dict):
-    return "### Синастрия\n\nРасчет совместимости готов."
+    return "### Синастрия\n\nСервер работает."
 
 @app.post("/personal_horoscope")
 async def personal(request: dict):
-    return "### Ваш гороскоп\n\nПерсональный прогноз готов."
+    return "### Гороскоп\n\nСервер работает."
 
 if __name__ == "__main__":
     import uvicorn
