@@ -7,6 +7,7 @@ import ephem  # <-- Используем эту библиотеку
 import swisseph as swe
 import os
 
+current_dir = os.path.dirname(os.path.abspath(__file__))
 # Получаем путь к папке, где лежит этот скрипт (main.py)
 base_dir = os.path.dirname(os.path.abspath(__file__))
 
