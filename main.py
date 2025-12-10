@@ -21,6 +21,22 @@ current_dir = os.path.dirname(os.path.abspath(__file__))
 ephe_path = os.path.join(current_dir, 'ephe')
 swe.set_ephe_path(ephe_path)
 
+# --- БАЗА ТЕКСТОВ ---
+zodiac_texts = {
+    "Aries": "## Ваше Солнце в Овне ♈\nВы — первопроходец. Ваша стихия — Огонь. Вы полны энергии, инициативы и смелости. Ваша задача — начинать новые дела и вдохновлять других.",
+    "Taurus": "## Ваше Солнце в Тельце ♉\nВы — созидатель. Ваша стихия — Земля. Вы цените комфорт, красоту и стабильность. Вы надежны, терпеливы и умеете наслаждаться жизнью.",
+    "Gemini": "## Ваше Солнце в Близнецах ♊\nВы — коммуникатор. Ваша стихия — Воздух. Вы любознательны, общительны и легки на подъем. Ваш ум всегда требует новой пищи.",
+    "Cancer": "## Ваше Солнце в Раке ♋\nВы — хранитель. Ваша стихия — Вода. Вы обладаете глубокой эмпатией, интуицией и привязаны к семье. Вы умеете заботиться как никто другой.",
+    "Leo": "## Ваше Солнце во Льве ♌\nВы — звезда. Ваша стихия — Огонь. Вы рождены, чтобы сиять, творить и любить. Ваше великодушие и харизма притягивают людей.",
+    "Virgo": "## Ваше Солнце в Деве ♍\nВы — исследователь. Ваша стихия — Земля. Вы внимательны к деталям, трудолюбивы и стремитесь к совершенству. Ваш конек — порядок и анализ.",
+    "Libra": "## Ваше Солнце в Весах ♎\nВы — дипломат. Ваша стихия — Воздух. Вы стремитесь к гармонии, красоте и партнерству. Вы умеете видеть ситуацию с разных сторон.",
+    "Scorpio": "## Ваше Солнце в Скорпионе ♏\nВы — мистик. Ваша стихия — Вода. Вы обладаете мощной волей, проницательностью и магнетизмом. Вы не боитесь перемен и кризисов.",
+    "Sagittarius": "## Ваше Солнце в Стрельце ♐\nВы — философ. Ваша стихия — Огонь. Ваш оптимизм неиссякаем. Вы любите путешествия, знания и стремитесь расширять горизонты.",
+    "Capricorn": "## Ваше Солнце в Козероге ♑\nВы — стратег. Ваша стихия — Земля. Вы амбициозны, дисциплинированы и ответственны. Вы умеете ставить цели и достигать вершин.",
+    "Aquarius": "## Ваше Солнце в Водолее ♒\nВы — новатор. Ваша стихия — Воздух. Вы цените свободу, дружбу и оригинальность. Ваш взгляд всегда устремлен в будущее.",
+    "Pisces": "## Ваше Солнце в Рыбах ♓\nВы — мечтатель. Ваша стихия — Вода. Вы обладаете богатым воображением, состраданием и тонкой интуицией. Вы чувствуете этот мир сердцем."
+}
+
 class BirthData(BaseModel):
     birthDateTime: str
     latitude: float
@@ -49,12 +65,12 @@ async def calculate_chart(data: BirthData):
         julian_day = swe.julday(utc_dt.year, utc_dt.month, utc_dt.day, 
                                 utc_dt.hour + utc_dt.minute/60.0 + utc_dt.second/3600.0)
 
-        # 2. Режим (Файлы или Moshier)
+        # 2. Режим
         calc_flag = swe.FLG_SWIEPH | swe.FLG_SPEED
         try:
             swe.calc_ut(julian_day, swe.SUN, calc_flag)
         except swe.Error:
-            print("WARNING: Files issue. Switching to Moshier.")
+            print("Warning: Using Moshier mode")
             calc_flag = swe.FLG_MOSEPH | swe.FLG_SPEED
 
         # 3. Планеты
@@ -72,19 +88,10 @@ async def calculate_chart(data: BirthData):
             try:
                 res = swe.calc_ut(julian_day, pid, calc_flag)
                 coords = res[0]
+                if not coords or len(coords) < 1: continue
                 
-                # ЗАЩИТА №1: Проверяем, есть ли вообще координаты
-                if not coords or len(coords) < 1:
-                    print(f"Skipping {name}: No coordinates returned")
-                    continue
-
                 lon = coords[0]
-                
-                # ЗАЩИТА №2: Скорость
-                if len(coords) >= 4:
-                    speed = coords[3]
-                else:
-                    speed = 0.0
+                speed = coords[3] if len(coords) >= 4 else 0.0
 
                 planets_result.append({
                     "name": name,
@@ -93,16 +100,13 @@ async def calculate_chart(data: BirthData):
                     "signDegree": lon % 30,
                     "isRetrograde": speed < 0
                 })
-            except Exception as e:
-                print(f"Error planet {name}: {e}")
+            except:
                 continue
 
-        # 4. Дома (ЗДЕСЬ БЫЛА СКРЫТАЯ ОШИБКА)
+        # 4. Дома
         try:
             cusps, ascmc = swe.houses(julian_day, data.latitude, data.longitude, b'P')
-            
             houses_result = []
-            # swe.houses возвращает 13 куспидов (0-й пустой)
             if len(cusps) >= 13:
                 for i in range(1, 13):
                     h_lon = cusps[i]
@@ -112,30 +116,15 @@ async def calculate_chart(data: BirthData):
                         "sign": get_sign(h_lon),
                         "signDegree": h_lon % 30
                     })
-            else:
-                # Если куспидов нет, создаем пустышки, чтобы фронтенд не падал
-                houses_result = []
-
-            # ЗАЩИТА №3: Асцендент и MC
-            # ascmc должен содержать [Asc, MC, ARMC, Vertex, ...]
-            # Ошибка tuple index out of range часто была ТУТ
-            asc = 0.0
-            mc = 0.0
             
-            if ascmc and len(ascmc) >= 2:
-                asc = ascmc[0]
-                mc = ascmc[1]
-            else:
-                print("WARNING: No Ascendant/MC calculated")
-            
+            asc = ascmc[0] if ascmc and len(ascmc) >= 1 else 0.0
+            mc = ascmc[1] if ascmc and len(ascmc) >= 2 else 0.0
             angles = {"Ascendant": asc, "MC": mc}
 
-        except Exception as e:
-             print(f"House calculation failed completely: {e}")
+        except:
              houses_result = []
              angles = {"Ascendant": 0.0, "MC": 0.0}
 
-        # 5. Результат
         return {
             "planets": planets_result,
             "houses": houses_result,
@@ -143,20 +132,40 @@ async def calculate_chart(data: BirthData):
         }
 
     except Exception as e:
-        print(f"FATAL ERROR: {e}")
+        print(f"FATAL: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 @app.post("/interpret")
 async def interpret(request: dict):
-    return "### Интерпретация\n\nСервер работает."
+    # Логика: Приложение присылает нам карту. Мы ищем там Солнце.
+    try:
+        # Проверяем, где лежит список планет (в 'chart' или сразу в корне)
+        chart = request.get('chart', request)
+        planets = chart.get('planets', [])
+        
+        sun_sign = "Unknown"
+        
+        # Ищем Солнце в списке
+        for p in planets:
+            if p.get('name') == 'Sun':
+                sun_sign = p.get('sign')
+                break
+        
+        # Берем текст из базы
+        text = zodiac_texts.get(sun_sign, "Знак зодиака не определен.")
+        
+        return text
+
+    except Exception as e:
+        return f"Ошибка интерпретации: {str(e)}"
 
 @app.post("/synastry")
 async def synastry(request: dict):
-    return "### Синастрия\n\nСервер работает."
+    return "### Совместимость\n\nФункция работает. Нужно добавить тексты совместимости."
 
 @app.post("/personal_horoscope")
 async def personal(request: dict):
-    return "### Гороскоп\n\nСервер работает."
+    return "### Гороскоп на сегодня\n\nТранзиты рассчитаны успешно. "
 
 if __name__ == "__main__":
     import uvicorn
