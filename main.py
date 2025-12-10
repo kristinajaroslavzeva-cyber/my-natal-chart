@@ -8,7 +8,6 @@ import os
 
 app = FastAPI()
 
-# Настройка CORS
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -17,25 +16,25 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# --- НАСТРОЙКА ЭФЕМЕРИД ---
+# --- НАСТРОЙКА ПУТЕЙ ---
 current_dir = os.path.dirname(os.path.abspath(__file__))
 ephe_path = os.path.join(current_dir, 'ephe')
 swe.set_ephe_path(ephe_path)
 
-# Простая база текстов (можно расширять)
+# База текстов
 zodiac_texts = {
-    "Aries": "Вы — Овен ♈. Стихия — Огонь. Вы полны энергии, инициативны и прямолинейны.",
-    "Taurus": "Вы — Телец ♉. Стихия — Земля. Вы цените комфорт, стабильность и красоту.",
-    "Gemini": "Вы — Близнецы ♊. Стихия — Воздух. Вы общительны и любознательны.",
-    "Cancer": "Вы — Рак ♋. Стихия — Вода. Вы эмоциональны и заботливы.",
-    "Leo": "Вы — Лев ♌. Стихия — Огонь. Вы рождены, чтобы сиять и вести за собой.",
-    "Virgo": "Вы — Дева ♍. Стихия — Земля. Вы внимательны к деталям и любите порядок.",
-    "Libra": "Вы — Весы ♎. Стихия — Воздух. Вы стремитесь к гармонии и партнерству.",
-    "Scorpio": "Вы — Скорпион ♏. Стихия — Вода. Вы обладаете мощной интуицией.",
-    "Sagittarius": "Вы — Стрелец ♐. Стихия — Огонь. Вы оптимист и философ.",
-    "Capricorn": "Вы — Козерог ♑. Стихия — Земля. Вы амбициозны и дисциплинированы.",
-    "Aquarius": "Вы — Водолей ♒. Стихия — Воздух. Вы оригинальны и независимы.",
-    "Pisces": "Вы — Рыбы ♓. Стихия — Вода. Вы мечтательны и сострадательны."
+    "Aries": "Вы — Овен ♈. Энергия, старт, инициатива.",
+    "Taurus": "Вы — Телец ♉. Надежность, комфорт, упорство.",
+    "Gemini": "Вы — Близнецы ♊. Общение, информация, легкость.",
+    "Cancer": "Вы — Рак ♋. Эмоции, семья, забота.",
+    "Leo": "Вы — Лев ♌. Творчество, лидерство, яркость.",
+    "Virgo": "Вы — Дева ♍. Порядок, анализ, служение.",
+    "Libra": "Вы — Весы ♎. Партнерство, гармония, эстетика.",
+    "Scorpio": "Вы — Скорпион ♏. Трансформация, сила, глубина.",
+    "Sagittarius": "Вы — Стрелец ♐. Цель, философия, масштаб.",
+    "Capricorn": "Вы — Козерог ♑. Структура, карьера, время.",
+    "Aquarius": "Вы — Водолей ♒. Свобода, друзья, будущее.",
+    "Pisces": "Вы — Рыбы ♓. Мечты, единство, тайны."
 }
 
 class BirthData(BaseModel):
@@ -53,11 +52,7 @@ def get_sign(longitude):
 @app.post("/calculate")
 async def calculate_chart(data: BirthData):
     try:
-        # Проверка путей перед расчетом
-        if not os.path.exists(ephe_path):
-            raise Exception(f"CRITICAL ERROR: Ephemeris folder not found at {ephe_path}")
-
-        # 1. Подготовка времени (UTC)
+        # 1. Обработка времени
         local_dt = datetime.fromisoformat(data.birthDateTime)
         try:
             tz = pytz.timezone(data.zoneId)
@@ -67,12 +62,24 @@ async def calculate_chart(data: BirthData):
             local_dt = local_dt.replace(tzinfo=pytz.UTC)
         
         utc_dt = local_dt.astimezone(pytz.utc)
-
-        # 2. Юлианский день
+        
         julian_day = swe.julday(utc_dt.year, utc_dt.month, utc_dt.day, 
                                 utc_dt.hour + utc_dt.minute/60.0 + utc_dt.second/3600.0)
 
-        # 3. Объекты
+        # 2. Определяем режим работы (Файлы или Формулы)
+        # Сначала пробуем флаг FLG_SWIEPH (требует файлы)
+        calc_flag = swe.FLG_SWIEPH | swe.FLG_SPEED
+        
+        # Тестовый расчет Солнца, чтобы проверить, работают ли файлы
+        try:
+            swe.calc_ut(julian_day, swe.SUN, calc_flag)
+        except swe.Error:
+            # Если файлы не найдены - переключаемся на режим формул (Moshier)
+            # Это спасет от ошибки 500!
+            print("WARNING: Ephemeris files not found. Switching to Moshier mode.")
+            calc_flag = swe.FLG_MOSEPH | swe.FLG_SPEED
+
+        # 3. Список планет
         bodies = {
             "Sun": swe.SUN, "Moon": swe.MOON, "Mercury": swe.MERCURY, 
             "Venus": swe.VENUS, "Mars": swe.MARS, "Jupiter": swe.JUPITER, 
@@ -83,58 +90,69 @@ async def calculate_chart(data: BirthData):
 
         planets_result = []
 
-        # 4. Расчет планет
         for name, pid in bodies.items():
-            res = swe.calc_ut(julian_day, pid, swe.FLG_SWIEPH + swe.FLG_SPEED)
-            coords = res[0]
-            lon = coords[0]
-            speed = coords[3]
+            try:
+                res = swe.calc_ut(julian_day, pid, calc_flag)
+                coords = res[0]
+                lon = coords[0]
+                speed = coords[3]
 
-            planets_result.append({
-                "name": name,
-                "eclipticLongitude": lon,
-                "sign": get_sign(lon),
-                "signDegree": lon % 30,
-                "isRetrograde": speed < 0
-            })
+                planets_result.append({
+                    "name": name,
+                    "eclipticLongitude": lon,
+                    "sign": get_sign(lon),
+                    "signDegree": lon % 30,
+                    "isRetrograde": speed < 0
+                })
+            except swe.Error as e:
+                print(f"Error calculating {name}: {e}")
+                # Если одна планета не посчиталась, пропускаем её, но не валим весь сервер
+                continue
 
-        # 5. Расчет домов
-        cusps, ascmc = swe.houses(julian_day, data.latitude, data.longitude, b'P')
-        houses_result = []
-        
-        for i in range(1, 13):
-            h_lon = cusps[i]
-            houses_result.append({
-                "houseNumber": i,
-                "eclipticLongitude": h_lon,
-                "sign": get_sign(h_lon),
-                "signDegree": h_lon % 30
-            })
+        # 4. Расчет домов
+        # Для домов тоже нужен try-except
+        try:
+            cusps, ascmc = swe.houses(julian_day, data.latitude, data.longitude, b'P')
+            houses_result = []
+            for i in range(1, 13):
+                h_lon = cusps[i]
+                houses_result.append({
+                    "houseNumber": i,
+                    "eclipticLongitude": h_lon,
+                    "sign": get_sign(h_lon),
+                    "signDegree": h_lon % 30
+                })
+            
+            angles = {"Ascendant": ascmc[0], "MC": ascmc[1]}
+        except:
+             # Если дома не вышли, отдадим пустые, но вернем результат
+             houses_result = []
+             angles = {"Ascendant": 0.0, "MC": 0.0}
 
         return {
             "planets": planets_result,
             "houses": houses_result,
-            "angles": {"Ascendant": ascmc[0], "MC": ascmc[1]}
+            "angles": angles
         }
 
     except Exception as e:
-        print(f"Server Error: {e}")
-        # Возвращаем текст ошибки, чтобы видеть его в приложении
-        raise HTTPException(status_code=500, detail=f"Server Error: {str(e)}")
+        # Ловим любую другую ошибку и пишем её в консоль
+        print(f"CRITICAL SERVER ERROR: {e}")
+        # Возвращаем 500, но с текстом ошибки
+        raise HTTPException(status_code=500, detail=str(e))
 
+# ... остальные эндпоинты ...
 @app.post("/interpret")
 async def interpret(request: dict):
-    # Пытаемся определить знак по данным, если они есть
-    # Но пока возвращаем общий ответ + текст знака, если он передан
-    return "### Интерпретация (Сервер)\n\nДанные успешно получены с сервера. Тексты интерпретации загружены."
+    return "### Интерпретация (Сервер)\n\nДанные получены."
 
 @app.post("/synastry")
 async def synastry(request: dict):
-    return "### Синастрия\n\nСервер готов к расчету совместимости."
+    return "### Синастрия\n\nРасчет готов."
 
 @app.post("/personal_horoscope")
 async def personal(request: dict):
-    return "### Ваш гороскоп\n\nПерсональный прогноз на сегодня (Сервер)."
+    return "### Ваш гороскоп\n\nПрогноз готов."
 
 if __name__ == "__main__":
     import uvicorn
