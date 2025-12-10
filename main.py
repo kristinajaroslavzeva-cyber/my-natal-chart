@@ -21,22 +21,6 @@ current_dir = os.path.dirname(os.path.abspath(__file__))
 ephe_path = os.path.join(current_dir, 'ephe')
 swe.set_ephe_path(ephe_path)
 
-# База текстов
-zodiac_texts = {
-    "Aries": "Вы — Овен ♈. Энергия, старт, инициатива.",
-    "Taurus": "Вы — Телец ♉. Надежность, комфорт, упорство.",
-    "Gemini": "Вы — Близнецы ♊. Общение, информация, легкость.",
-    "Cancer": "Вы — Рак ♋. Эмоции, семья, забота.",
-    "Leo": "Вы — Лев ♌. Творчество, лидерство, яркость.",
-    "Virgo": "Вы — Дева ♍. Порядок, анализ, служение.",
-    "Libra": "Вы — Весы ♎. Партнерство, гармония, эстетика.",
-    "Scorpio": "Вы — Скорпион ♏. Трансформация, сила, глубина.",
-    "Sagittarius": "Вы — Стрелец ♐. Цель, философия, масштаб.",
-    "Capricorn": "Вы — Козерог ♑. Структура, карьера, время.",
-    "Aquarius": "Вы — Водолей ♒. Свобода, друзья, будущее.",
-    "Pisces": "Вы — Рыбы ♓. Мечты, единство, тайны."
-}
-
 class BirthData(BaseModel):
     birthDateTime: str
     latitude: float
@@ -66,17 +50,14 @@ async def calculate_chart(data: BirthData):
         julian_day = swe.julday(utc_dt.year, utc_dt.month, utc_dt.day, 
                                 utc_dt.hour + utc_dt.minute/60.0 + utc_dt.second/3600.0)
 
-        # 2. Определяем режим работы (Файлы или Формулы)
-        # Сначала пробуем флаг FLG_SWIEPH (требует файлы)
+        # 2. Режим работы
         calc_flag = swe.FLG_SWIEPH | swe.FLG_SPEED
         
-        # Тестовый расчет Солнца, чтобы проверить, работают ли файлы
+        # Проверка файлов (тест на Солнце)
         try:
             swe.calc_ut(julian_day, swe.SUN, calc_flag)
         except swe.Error:
-            # Если файлы не найдены - переключаемся на режим формул (Moshier)
-            # Это спасет от ошибки 500!
-            print("WARNING: Ephemeris files not found. Switching to Moshier mode.")
+            print("WARNING: Files not found. Switching to Moshier.")
             calc_flag = swe.FLG_MOSEPH | swe.FLG_SPEED
 
         # 3. Список планет
@@ -94,8 +75,16 @@ async def calculate_chart(data: BirthData):
             try:
                 res = swe.calc_ut(julian_day, pid, calc_flag)
                 coords = res[0]
+                
+                # --- ВОТ ЗДЕСЬ БЫЛА ОШИБКА, ТЕПЕРЬ ТУТ ЗАЩИТА ---
                 lon = coords[0]
-                speed = coords[3]
+                
+                # Проверяем, есть ли в ответе скорость (индекс 3)
+                # Если список короче 4 элементов, ставим скорость 0
+                if len(coords) > 3:
+                    speed = coords[3]
+                else:
+                    speed = 0.0
 
                 planets_result.append({
                     "name": name,
@@ -104,13 +93,11 @@ async def calculate_chart(data: BirthData):
                     "signDegree": lon % 30,
                     "isRetrograde": speed < 0
                 })
-            except swe.Error as e:
-                print(f"Error calculating {name}: {e}")
-                # Если одна планета не посчиталась, пропускаем её, но не валим весь сервер
+            except Exception as e:
+                print(f"Skipping {name} due to error: {e}")
                 continue
 
-        # 4. Расчет домов
-        # Для домов тоже нужен try-except
+        # 4. Дома
         try:
             cusps, ascmc = swe.houses(julian_day, data.latitude, data.longitude, b'P')
             houses_result = []
@@ -122,10 +109,9 @@ async def calculate_chart(data: BirthData):
                     "sign": get_sign(h_lon),
                     "signDegree": h_lon % 30
                 })
-            
             angles = {"Ascendant": ascmc[0], "MC": ascmc[1]}
-        except:
-             # Если дома не вышли, отдадим пустые, но вернем результат
+        except Exception as e:
+             print(f"House calc error: {e}")
              houses_result = []
              angles = {"Ascendant": 0.0, "MC": 0.0}
 
@@ -136,15 +122,12 @@ async def calculate_chart(data: BirthData):
         }
 
     except Exception as e:
-        # Ловим любую другую ошибку и пишем её в консоль
         print(f"CRITICAL SERVER ERROR: {e}")
-        # Возвращаем 500, но с текстом ошибки
         raise HTTPException(status_code=500, detail=str(e))
 
-# ... остальные эндпоинты ...
 @app.post("/interpret")
 async def interpret(request: dict):
-    return "### Интерпретация (Сервер)\n\nДанные получены."
+    return "### Интерпретация\n\nДанные получены."
 
 @app.post("/synastry")
 async def synastry(request: dict):
