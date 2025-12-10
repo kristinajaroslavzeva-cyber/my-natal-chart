@@ -3,7 +3,5 @@ uvicorn
 pyswisseph
 requests
 pytz
-python-dateutil
 ephem
 google-generativeai
-
