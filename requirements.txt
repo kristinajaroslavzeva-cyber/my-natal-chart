@@ -2,3 +2,5 @@ fastapi
 uvicorn
 pyswisseph
 requests
+pytz
+python-dateutil
