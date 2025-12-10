@@ -15,7 +15,7 @@ app.add_middleware(
 )
 
 # КЛЮЧ
-GEMINI_API_KEY = "AIzaSyAObmU1VR5hRc-bCcbYyfanS_6QQ2vr1ks"
+GEMINI_API_KEY = "AIzaSyD-cVzx6xh-fUmajMe15-CV8RvNpLxLKNc"
 genai.configure(api_key=GEMINI_API_KEY)
 
 # --- АВТОПОДБОР МОДЕЛИ (Чтобы не было 404) ---
