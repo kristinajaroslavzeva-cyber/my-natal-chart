@@ -4,3 +4,4 @@ pyswisseph
 requests
 pytz
 python-dateutil
+ephem
